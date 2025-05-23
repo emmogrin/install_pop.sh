@@ -36,10 +36,9 @@ EOF'
 $SUDO sysctl -p /etc/sysctl.d/99-popcache.conf
 
 echo "${bold}Setting file descriptor limits...${normal}"
-$SUDO bash -c 'cat > /etc/security/limits.d/popcache.conf <<EOF
-
-hard nofile 65535
-soft nofile 65535
+sudo bash -c 'cat <<EOF > /etc/security/limits.d/popcache.conf
+* soft nofile 65535
+* hard nofile 65535
 EOF'
 
 echo "${bold}Creating directories...${normal}"
