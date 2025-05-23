@@ -1,27 +1,17 @@
 #!/bin/bash
+set -e
 
-bold=$(tput bold)
-normal=$(tput sgr0)
 echo ""
-echo "${bold}████████████████████████████████████████████████████████████████"
+echo "████████████████████████████████████████████████████████████████"
 echo "██                     SAINT KHEN DOMINATION                    ██"
 echo "████████████████████████████████████████████████████████████████"
 echo ""
 
-set -e
+echo "Updating system and installing dependencies..."
+apt update && apt install libssl-dev ca-certificates jq wget -y
 
-# Check for sudo, fallback to plain if not found
-if command -v sudo &>/dev/null; then
-  SUDO="sudo"
-else
-  SUDO=""
-fi
-
-echo "${bold}Updating system and installing dependencies...${normal}"
-$SUDO apt update && $SUDO apt install -y libssl-dev ca-certificates jq wget
-
-echo "${bold}Setting sysctl parameters...${normal}"
-$SUDO bash -c 'cat > /etc/sysctl.d/99-popcache.conf <<EOF
+echo "Setting sysctl parameters..."
+cat <<EOF | sudo tee /etc/sysctl.d/99-popcache.conf
 net.ipv4.ip_local_port_range = 1024 65535
 net.core.somaxconn = 65535
 net.ipv4.tcp_low_latency = 1
@@ -32,52 +22,41 @@ net.ipv4.tcp_wmem = 4096 65536 16777216
 net.ipv4.tcp_rmem = 4096 87380 16777216
 net.core.wmem_max = 16777216
 net.core.rmem_max = 16777216
-EOF'
-$SUDO sysctl -p /etc/sysctl.d/99-popcache.conf
+EOF
 
-echo "${bold}Setting file descriptor limits...${normal}"
-sudo bash -c 'cat <<EOF > /etc/security/limits.d/popcache.conf
+sysctl -p /etc/sysctl.d/99-popcache.conf
+
+echo "Setting file limits..."
+cat <<EOF | sudo tee /etc/security/limits.d/popcache.conf
 * soft nofile 65535
 * hard nofile 65535
-EOF'
+EOF
 
-echo "${bold}Creating directories...${normal}"
-$SUDO mkdir -p /opt/popcache/logs
+echo "Creating directories..."
+sudo mkdir -p /opt/popcache/logs
+cd /opt/popcache
 
-cd /opt/popcache || exit
+echo "Downloading PoP node..."
+wget -q https://download.pipe.network/static/pop-v0.3.0-linux-x64.tar.gz
+sudo tar -xzf pop-v0.3.0-linux-*.tar.gz
+chmod 755 /opt/popcache/pop
 
-ARCH=$(uname -m)
-if [[ "$ARCH" == "aarch64" ]]; then
-  BIN_URL="https://download.pipe.network/static/pop-v0.3.0-linux-arm64.tar.gz"
-else
-  BIN_URL="https://download.pipe.network/static/pop-v0.3.0-linux-x64.tar.gz"
-fi
+# ===== Prompts =====
+echo ""
+echo "Enter PoP node configuration details:"
+read -p "POP Name: " POP_NAME
+read -p "POP Location (City, Country): " POP_LOCATION
+read -p "Invite Code: " INVITE_CODE
+read -p "Node Name: " NODE_NAME
+read -p "Your Name: " YOUR_NAME
+read -p "Your Email: " YOUR_EMAIL
+read -p "Your Website (or N/A): " WEBSITE
+read -p "Your Discord: " DISCORD
+read -p "Your Telegram: " TELEGRAM
+read -p "Your Solana Wallet Address: " SOLANA
 
-echo "${bold}Downloading POP binary for architecture: $ARCH${normal}"
-wget -q --show-progress "$BIN_URL" -O pop.tar.gz
-
-echo "${bold}Extracting binary...${normal}"
-tar -xzf pop.tar.gz
-$SUDO mv -f pop /opt/popcache/pop
-$SUDO chmod 755 /opt/popcache/pop
-rm -f pop.tar.gz
-
-echo "${bold}Please enter the following details:${normal}"
-
-read -rp "POP Name (e.g. wang): " POP_NAME
-read -rp "POP Location (City, Country) (e.g. Nigeria): " POP_LOCATION
-read -rp "Invite Code: " INVITE_CODE
-read -rp "Node Name: " NODE_NAME
-read -rp "Your Name: " YOUR_NAME
-read -rp "Your Email: " YOUR_EMAIL
-read -rp "Your Website (URL): " YOUR_WEBSITE
-read -rp "Discord Username: " DISCORD_USERNAME
-read -rp "Telegram Handle (with @): " TELEGRAM_HANDLE
-read -rp "Solana Wallet Address: " SOLANA_WALLET
-
-echo "${bold}Writing config.json...${normal}"
-
-cat <<EOF > config.json
+echo "Creating config.json..."
+cat <<EOF | sudo tee /opt/popcache/config.json
 {
   "pop_name": "$POP_NAME",
   "pop_location": "$POP_LOCATION",
@@ -103,18 +82,16 @@ cat <<EOF > config.json
     "node_name": "$NODE_NAME",
     "name": "$YOUR_NAME",
     "email": "$YOUR_EMAIL",
-    "website": "$YOUR_WEBSITE",
-    "discord": "$DISCORD_USERNAME",
-    "telegram": "$TELEGRAM_HANDLE",
-    "solana_pubkey": "$SOLANA_WALLET"
+    "website": "$WEBSITE",
+    "discord": "$DISCORD",
+    "telegram": "$TELEGRAM",
+    "solana_pubkey": "$SOLANA"
   }
 }
 EOF
 
-echo "${bold}Setting up systemd service...${normal}"
-
-if command -v systemctl &>/dev/null; then
-  $SUDO bash -c 'cat > /etc/systemd/system/popcache.service <<EOF
+echo "Setting up systemd service..."
+cat <<EOF | sudo tee /etc/systemd/system/popcache.service
 [Unit]
 Description=POP Cache Node
 After=network.target
@@ -124,7 +101,7 @@ Type=simple
 User=root
 Group=root
 WorkingDirectory=/opt/popcache
-ExecStart=/opt/popcache/pop --config /opt/popcache/config.json
+ExecStart=/opt/popcache/pop
 Restart=always
 RestartSec=5
 LimitNOFILE=65535
@@ -134,24 +111,22 @@ Environment=POP_CONFIG_PATH=/opt/popcache/config.json
 
 [Install]
 WantedBy=multi-user.target
-EOF'
+EOF
 
-  $SUDO systemctl enable popcache
-  $SUDO systemctl daemon-reload
-  $SUDO systemctl restart popcache
-else
-  echo "${bold}Systemd not detected — service setup skipped.${normal}"
-fi
-
-echo "${bold}Checking node health endpoints...${normal}"
-
-curl -s http://localhost/health || echo ">>> HTTP health check failed"
-curl -sk https://localhost/health | jq . || echo ">>> HTTPS health check failed"
-curl -sk https://localhost/state | jq . || echo ">>> State endpoint check failed"
-curl -sk https://localhost/metrics | jq . || echo ">>> Metrics endpoint check failed"
+echo "Starting PoP node..."
+sudo systemctl enable popcache
+sudo systemctl daemon-reload
+sudo systemctl start popcache
+sudo systemctl status popcache
 
 echo ""
-echo "${bold}████████████████████████████████████████████████████████████████"
+echo "Check endpoints:"
+echo "  curl http://localhost/health"
+echo "  curl -k https://localhost/health | jq"
+echo "  curl -k https://localhost/state | jq"
+echo "  curl -k https://localhost/metrics | jq"
+echo ""
+
+echo "████████████████████████████████████████████████████████████████"
 echo "██                     SAINT KHEN DOMINATION                    ██"
 echo "████████████████████████████████████████████████████████████████"
-echo ""
