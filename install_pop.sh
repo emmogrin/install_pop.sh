@@ -1,12 +1,20 @@
 #!/bin/bash
-echo -e "\e[1mSAINT KHEN\e[0m"
 
-# Install dependencies
-apt update && apt install libssl-dev ca-certificates jq wget -y
+echo ""
+echo "███████╗ █████╗ ██╗███╗   ██╗████████╗    ██╗  ██╗██╗  ██╗███████╗███╗   ██╗"
+echo "██╔════╝██╔══██╗██║████╗  ██║╚══██╔══╝    ██║ ██╔╝╚██╗██╔╝██╔════╝████╗  ██║"
+echo "███████╗███████║██║██╔██╗ ██║   ██║       █████╔╝  ╚███╔╝ █████╗  ██╔██╗ ██║"
+echo "╚════██║██╔══██║██║██║╚██╗██║   ██║       ██╔═██╗  ██╔██╗ ██╔══╝  ██║╚██╗██║"
+echo "███████║██║  ██║██║██║ ╚████║   ██║       ██║  ██╗██╔╝ ██╗███████╗██║ ╚████║"
+echo "╚══════╝╚═╝  ╚═╝╚═╝╚═╝  ╚═══╝   ╚═╝       ╚═╝  ╚═╝╚═╝  ╚═╝╚══════╝╚═╝  ╚═══╝"
+echo "                          SAINT KHEN || @admirkhen"
+echo ""
 
-# Set system configurations (PC only; skip if running on proot-distro without root)
-if [ "$(id -u)" -eq 0 ]; then
-  bash -c 'cat > /etc/sysctl.d/99-popcache.conf << EOL
+# Update & install
+apt update && apt install -y libssl-dev ca-certificates jq wget tar
+
+# Sysctl tuning
+sudo bash -c 'cat > /etc/sysctl.d/99-popcache.conf << EOL
 net.ipv4.ip_local_port_range = 1024 65535
 net.core.somaxconn = 65535
 net.ipv4.tcp_low_latency = 1
@@ -18,41 +26,64 @@ net.ipv4.tcp_rmem = 4096 87380 16777216
 net.core.wmem_max = 16777216
 net.core.rmem_max = 16777216
 EOL'
-  sysctl -p /etc/sysctl.d/99-popcache.conf
+sudo sysctl -p /etc/sysctl.d/99-popcache.conf
 
-  bash -c 'cat > /etc/security/limits.d/popcache.conf << EOL
+# Ulimit config
+sudo bash -c 'cat > /etc/security/limits.d/popcache.conf << EOL
 *    hard nofile 65535
 *    soft nofile 65535
 EOL'
+
+# Setup dir
+sudo mkdir -p /opt/popcache/logs
+cd /opt/popcache
+
+# Architecture check
+ARCH=$(uname -m)
+echo ">>> ARCH DETECTED: $ARCH"
+
+if [[ "$ARCH" == "x86_64" ]]; then
+    echo ">>> Downloading x86_64 POP binary"
+    wget https://download.pipe.network/static/pop-v0.3.0-linux-x64.tar.gz -O pop.tar.gz
+elif [[ "$ARCH" == "aarch64" ]]; then
+    echo ">>> Downloading ARM64 POP binary"
+    wget https://download.pipe.network/static/pop-v0.3.0-linux-arm64.tar.gz -O pop.tar.gz
+else
+    echo ">>> ARCHITECTURE NOT SUPPORTED BY SAINT KHEN"
+    exit 1
 fi
 
-# Create directories
-mkdir -p /opt/popcache/logs
-cd /opt/popcache || exit
+sudo rm -f /opt/popcache/pop*
+tar -xzf pop.tar.gz
+sudo mv pop /opt/popcache/pop
+sudo chmod 755 /opt/popcache/pop
 
-# Download and extract binary
-wget https://download.pipe.network/static/pop-v0.3.0-linux-x64.tar.gz
-tar -xzf pop-v0.3.0-linux-*.tar.gz
-chmod 755 /opt/popcache/pop
+# Branding
+echo ""
+echo "███████████████████████████████████████████████████████"
+echo "██      SAINT KHEN POP NODE INSTALLER LIVE!!!       ██"
+echo "██             powered by: @admirkhen                ██"
+echo "███████████████████████████████████████████████████████"
+echo ""
 
-# Prompt user for config values
-read -p "POP Name: " pop_name
-read -p "POP Location (City, Country): " pop_location
-read -p "Invite Code: " invite_code
-read -p "Node Name: " node_name
-read -p "Your Name: " name
+# Inputs
+read -p "POP Name: " popname
+read -p "POP Location (City, Country): " poplocation
+read -p "Invite Code: " invitecode
+read -p "Node Name: " nodename
+read -p "Your Name: " realname
 read -p "Your Email: " email
 read -p "Your Website: " website
 read -p "Discord Username: " discord
 read -p "Telegram: " telegram
 read -p "Solana Wallet Address: " solana
 
-# Write config.json
-cat > /opt/popcache/config.json << EOL
+# Config
+cat <<EOF | sudo tee /opt/popcache/config.json
 {
-  "pop_name": "$pop_name",
-  "pop_location": "$pop_location",
-  "invite_code": "$invite_code",
+  "pop_name": "$popname",
+  "pop_location": "$poplocation",
+  "invite_code": "$invitecode",
   "server": {
     "host": "0.0.0.0",
     "port": 443,
@@ -71,8 +102,8 @@ cat > /opt/popcache/config.json << EOL
     "base_url": "https://dataplane.pipenetwork.com"
   },
   "identity_config": {
-    "node_name": "$node_name",
-    "name": "$name",
+    "node_name": "$nodename",
+    "name": "$realname",
     "email": "$email",
     "website": "$website",
     "discord": "$discord",
@@ -80,11 +111,10 @@ cat > /opt/popcache/config.json << EOL
     "solana_pubkey": "$solana"
   }
 }
-EOL
+EOF
 
-# Setup systemd service (skip if not root)
-if [ "$(id -u)" -eq 0 ]; then
-  bash -c 'cat > /etc/systemd/system/popcache.service << EOL
+# Systemd (fails gracefully if not supported)
+sudo bash -c 'cat > /etc/systemd/system/popcache.service << EOL
 [Unit]
 Description=POP Cache Node
 After=network.target
@@ -106,21 +136,20 @@ Environment=POP_CONFIG_PATH=/opt/popcache/config.json
 WantedBy=multi-user.target
 EOL'
 
-  systemctl enable popcache
-  systemctl daemon-reload
-  systemctl start popcache
-  systemctl status popcache
-else
-  echo ">> Not root. Skipping systemd setup. Start manually using: ./pop"
-fi
+sudo systemctl enable popcache || echo ">>> Systemd enable skipped"
+sudo systemctl daemon-reexec || echo ">>> Systemd reload skipped"
+sudo systemctl restart popcache || echo ">>> Systemd start skipped"
 
-# Test endpoints
-echo ">> Health check:"
-curl http://localhost/health
-curl -k https://localhost/health | jq
-echo ">> State check:"
-curl -k https://localhost/state | jq
-echo ">> Metrics check:"
-curl -k https://localhost/metrics | jq
+# Health Check
+echo ""
+echo ">>> Checking Node Health"
+curl -s http://localhost/health || echo ">>> HTTP Failed"
+curl -ks https://localhost/health | jq || echo ">>> HTTPS Failed"
+curl -ks https://localhost/state | jq || echo ">>> State Failed"
+curl -ks https://localhost/metrics | jq || echo ">>> Metrics Failed"
 
-echo -e "\e[1mSAINT KHEN\e[0m"
+echo ""
+echo "██████████████████████████████████████████████████"
+echo "██     INSTALLATION COMPLETE — SAINT KHEN RULES ██"
+echo "██           FOLLOW THE MOVEMENT: @admirkhen    ██"
+echo "██████████████████████████████████████████████████"
